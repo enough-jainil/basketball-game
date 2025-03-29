@@ -5,17 +5,14 @@ let obstacles = []; // NEW: Array for obstacles
 let scorePopups = []; // NEW: Array for score "+1" effects
 let powerups = []; // NEW: Array for power-ups
 let hazards = []; // NEW: Array for airborne hazards
-let basketsScored = 0;
-let canShoot = true;
-let basketHoops = [];
-let shootCooldown = 0;
+let clouds = []; // <<-- ADD THIS LINE
 
 let score = 0;
 let gameSpeed; // Will be reset
 let gravity;
 let groundHeight;
 let spawnRate; // Will be reset
-let obstacleSpawnChance = 0.3; // NEW: 30% chance an obstacle spawns instead of nothing/ball
+let obstacleSpawnChance = 0.4; // NEW: 30% chance an obstacle spawns instead of nothing/ball
 let powerupSpawnChance = 0.05; // NEW: 5% chance a power-up spawns (adjust as needed)
 let hazardSpawnChance = 0.15; // NEW: 15% chance a hazard spawns (adjust as needed)
 
@@ -127,10 +124,10 @@ function setupPlayer() {
             push(); // Isolate drawing style for player
             // Invincibility Flash Effect
             if (isInvincible && frameCount % 10 < 5) {
-                 fill(255, 105, 180, 100); // Semi-transparent Pink
+                 fill(255, 0, 0, 100); // Semi-transparent Red
                  stroke(255, 255, 255, 100); // Semi-transparent White outline
             } else {
-                 fill(255, 90, 170); // Brighter Pink
+                 fill(255, 0, 0); // Bright Red
                  stroke(255); // White outline/detail color
             }
             strokeWeight(2); // Make outline visible
@@ -195,66 +192,6 @@ function setupPlayer() {
                 this.y + this.height > otherRect.y
              );
         },
-        shootBall: function() {
-            if (!canShoot || shootCooldown > 0) return;
-            
-            // Create a shot ball that arcs toward the nearest hoop
-            let nearestHoop = null;
-            let minDist = Infinity;
-            
-            for (let hoop of basketHoops) {
-                let d = hoop.x - this.x;
-                if (d > 0 && d < minDist) {
-                    minDist = d;
-                    nearestHoop = hoop;
-                }
-            }
-            
-            if (nearestHoop) {
-                let shotBall = {
-                    x: this.x + this.width,
-                    y: this.y + this.height * 0.3,
-                    targetX: nearestHoop.x + nearestHoop.width * 0.6,
-                    targetY: nearestHoop.y,
-                    size: 15 * scaleFactor,
-                    t: 0,
-                    hoop: nearestHoop,
-                    
-                    update: function() {
-                        this.t += 0.05;
-                        if (this.t >= 1) {
-                            // Check if ball went through hoop
-                            if (!this.hoop.scored && 
-                                abs(this.x - this.targetX) < 10 * scaleFactor && 
-                                abs(this.y - this.targetY) < 10 * scaleFactor) {
-                                basketsScored++;
-                                score += 3; // 3 points for a basket
-                                this.hoop.scored = true;
-                                createScorePopup(this.x, this.y, "+3");
-                            }
-                            return true; // Remove this ball
-                        }
-                        
-                        // Parabolic arc motion
-                        this.x = lerp(this.x, this.targetX, this.t);
-                        this.y = lerp(this.y, this.targetY, this.t) - sin(this.t * PI) * 100 * scaleFactor;
-                        return false;
-                    },
-                    
-                    show: function() {
-                        push();
-                        fill(255, 120, 0);
-                        noStroke();
-                        ellipse(this.x, this.y, this.size, this.size);
-                        pop();
-                    }
-                };
-                
-                shotBalls.push(shotBall);
-                canShoot = false;
-                shootCooldown = 30; // Cooldown before next shot
-            }
-        }
     };
 }
 
@@ -325,6 +262,7 @@ function createObstacle() {
     // NEW: Define possible obstacle types
     let possibleTypes = ['cone', 'bottle', 'rack', 'hand'];
     let obstacleType = random(possibleTypes); // Randomly pick a type
+    let isStompable = false; // NEW: Default to not stompable
 
     let visualData = {}; // Store visual details specific to the type
 
@@ -338,6 +276,7 @@ function createObstacle() {
         case 'rack':
             visualData.color = color(100, 100, 100); // Grey metal
             visualData.ballColor = color(255, 120, 0); // Orange balls
+            isStompable = true; // NEW: Racks can be stomped
             break;
         case 'hand':
             visualData.color = color(224, 172, 105); // Skin tone (adjust as desired)
@@ -350,6 +289,7 @@ function createObstacle() {
              // Store visual dimensions for the cone
              visualData.baseWidth = obstacleWidth * 1.5;
              visualData.topWidth = obstacleWidth * 0.5;
+             isStompable = true; // NEW: Cones can be stomped
              break;
     }
 
@@ -360,6 +300,7 @@ function createObstacle() {
         width: obstacleWidth, // Used for collision detection
         height: obstacleHeight, // Used for collision detection
         type: obstacleType, // Store the chosen type
+        stompable: isStompable, // <<< NEW: Add stompable property
         visuals: visualData, // Store the visual properties
         speed: gameSpeed,
 
@@ -530,6 +471,15 @@ function createHazard() {
     });
 }
 
+// --- NEW: Helper function to calculate score needed to reach a level ---
+function calculateScoreForLevel(level) {
+    if (level <= 1) return 0; // Level 1 requires 0 score
+    let lMinusOne = level - 1;
+    // Formula: 10*(L-1) + 5 * (L-1)*L / 2
+    // Score threshold to REACH level L
+    return 10 * lMinusOne + 5 * (lMinusOne * level) / 2;
+}
+
 // --- NEW: Power-up Object ---
 function createPowerup(x, y, type) {
     let powerupSize = 25 * scaleFactor;
@@ -578,7 +528,7 @@ function createPowerup(x, y, type) {
         activateEffect: function() {
             if (this.type === 'invincibility') {
                 isInvincible = true;
-                invincibilityTimer = INVINCIBILITY_DURATION;
+                invincibilityTimer += INVINCIBILITY_DURATION;
                 // Optional: Play power-up sound
             }
             // Add effect activation for other types here later
@@ -614,6 +564,52 @@ function createLevelUpEffect() {
     /* 
     Push this change to the score popup drawing code in the draw function:
     */
+}
+
+// --- NEW: Cloud Object ---
+function createCloud() {
+    let cloudY = random(height * 0.1, height * 0.4); // Spawn in upper part of sky
+    let cloudBaseSize = random(40, 80) * scaleFactor;
+    let cloudSpeed = gameSpeed * random(0.15, 0.3); // Slower than game speed
+    let numPuffs = floor(random(3, 6)); // 3 to 5 puffs per cloud
+    let puffData = [];
+
+    // Generate relative positions and sizes for the cloud puffs
+    for (let i = 0; i < numPuffs; i++) {
+        puffData.push({
+            // Offset relative to the cloud's main x, y
+            offsetX: random(-cloudBaseSize * 0.6, cloudBaseSize * 0.6),
+            offsetY: random(-cloudBaseSize * 0.2, cloudBaseSize * 0.2),
+            // Size of this specific puff
+            sizeX: random(cloudBaseSize * 0.5, cloudBaseSize * 0.9),
+            sizeY: random(cloudBaseSize * 0.4, cloudBaseSize * 0.7)
+        });
+    }
+
+    clouds.push({
+        x: width + cloudBaseSize, // Start off-screen right
+        y: cloudY,
+        baseSize: cloudBaseSize, // For off-screen check
+        speed: cloudSpeed,
+        puffs: puffData,
+
+        show: function() {
+            push();
+            fill(255, 255, 255, 200); // White, semi-transparent
+            noStroke();
+            // Draw each puff relative to the cloud's center
+            for (let puff of this.puffs) {
+                ellipse(this.x + puff.offsetX, this.y + puff.offsetY, puff.sizeX, puff.sizeY);
+            }
+            pop();
+        },
+
+        update: function() {
+            this.x -= this.speed;
+            // Return true if cloud is off-screen left
+            return this.x < -this.baseSize * 1.5; // A bit of margin
+        }
+    });
 }
 
 // --- p5.js Core Functions ---
@@ -698,19 +694,36 @@ function resetGame() {
     scorePopups = [];
     powerups = [];
     hazards = []; // Clear hazards array
+    courtFeatures = []; // Clear court features
+    clouds = []; // <<-- Clear clouds array
 
-    gameSpeed = 4;
-    spawnRate = 90;
+    gameSpeed = 4 * scaleFactor; // Apply scale factor on reset
+    spawnRate = 90; // Reset base spawn rate
 
     // Reset power-up states
     isInvincible = false;
     invincibilityTimer = 0;
     // Reset other power-up states here later
 
+    // Reset difficulty
+    difficultyLevel = 1;
+    nextLevelScore = calculateScoreForLevel(difficultyLevel + 1); // Calculate score needed for Level 2
+
     // Re-create the player object to reset its position and velocity
     setupPlayer();
 
-    gameState = 'playing'; // Start the game immediately after reset
+    // Add a couple of initial clouds
+    for (let i = 0; i < 3; i++) {
+        createCloud();
+        // Offset initial positions so they don't all start together
+        if (clouds.length > 0) {
+           clouds[clouds.length-1].x = random(width * 0.1, width * 1.5); 
+           clouds[clouds.length-1].y = random(height * 0.1, height * 0.4);
+        }
+    }
+
+
+    gameState = 'start'; // <<-- ADD THIS to go to the start screen first
     loop(); // Ensure the draw loop is running if it was stopped
 }
 
@@ -725,6 +738,24 @@ function triggerGameOver() {
 
 function draw() {
     background(100, 180, 255); // Slightly different Sky blue
+
+    // --- Update & Draw Clouds (Draw them first!) --- << NEW SECTION
+    // Add a small chance to spawn a new cloud during gameplay
+    if (gameState === 'playing' && random(1) < 0.015 && clouds.length < 7) { // Low chance, limit number
+         createCloud();
+    }
+
+    for (let i = clouds.length - 1; i >= 0; i--) {
+        let c = clouds[i];
+        // Update speed based on gameSpeed, but keep it slow
+        c.speed = gameSpeed * random(0.15, 0.3); 
+        c.show(); // Draw the cloud
+        if (c.update()) { // Update returns true if off-screen
+            clouds.splice(i, 1); // Remove it
+        }
+    }
+    // --- End Clouds ---
+
 
     // Draw ground - change to look like pavement/court
     fill(100, 105, 110); // Grey pavement color
@@ -782,6 +813,14 @@ function draw() {
                 }
             }
 
+            // Add a small chance to spawn a court feature too
+            if (random(1) < 0.08 && courtFeatures.length < 3) { // e.g., 8% chance, limit to 3 features max
+                let lastFeatureX = courtFeatures.length > 0 ? courtFeatures[courtFeatures.length-1].x : -Infinity;
+                // Only spawn if the last one is sufficiently far away
+                if (width - lastFeatureX > width * 0.4) { 
+                    createCourtFeature();
+                }
+            }
 
             // Check spacing before spawning (include hazards)
             let lastBallX = basketballs.length > 0 ? basketballs[basketballs.length - 1].x : -Infinity;
@@ -824,31 +863,21 @@ function draw() {
             }
             
             // --- Difficulty Increase (Score/Level-based) ---
-            if (score >= nextLevelScore && difficultyLevel < MAX_DIFFICULTY_LEVEL) { // Added level cap check
+            if (score >= nextLevelScore && difficultyLevel < MAX_DIFFICULTY_LEVEL) {
                 difficultyLevel++;
-                // IMPROVED: Calculate next score threshold based on the new level
-                // Formula: Base + (Level * Multiplier) - Adjust base/multiplier to tune difficulty curve
-                let baseRequirement = 10; 
-                let pointsPerLevel = 15;
-                nextLevelScore = baseRequirement + (difficultyLevel * pointsPerLevel); 
-                // Example Progression:
-                // Lvl 2 needs 10 + (2*15) = 40 total score
-                // Lvl 3 needs 10 + (3*15) = 55 total score
-                // Lvl 4 needs 10 + (4*15) = 70 total score ... etc.
-                // This creates increasing gaps but is calculated absolutely each time.
-                
-                // Boost game speed on level up
-                gameSpeed = min(gameSpeed + 0.5, MAX_GAME_SPEED);
-                
-                // Increase spawn chances for obstacles and hazards (capped)
-                obstacleSpawnChance = min(obstacleSpawnChance + 0.04, 0.6); // Slightly less increase, higher cap
-                hazardSpawnChance = min(hazardSpawnChance + 0.02, 0.35); // Slightly less increase, higher cap
-                
-                // NEW: Decrease powerup spawn chance (capped)
-                powerupSpawnChance = max(powerupSpawnChance - 0.005, 0.02); // Decrease chance, minimum 2%
-
-                // Visual feedback for level up
+                // Calculate the score needed to reach the *new* next level
+                nextLevelScore = calculateScoreForLevel(difficultyLevel + 1);
                 createLevelUpEffect();
+            }
+        }
+
+        // --- Update & Draw Court Features ---
+        for (let i = courtFeatures.length - 1; i >= 0; i--) {
+            let cf = courtFeatures[i];
+            cf.speed = gameSpeed * 0.7; // Update speed in case gameSpeed changed
+            cf.show(); // Draw the feature
+            if (cf.update()) { // Update returns true if off-screen
+                courtFeatures.splice(i, 1); // Remove it
             }
         }
 
@@ -910,12 +939,39 @@ function draw() {
             o.show(); // Draw the updated obstacle look
             o.update();
 
-            // Check collision with player ONLY if NOT invincible
-            if (!isInvincible && player.collidesWithRect(o)) { // MODIFIED Check
-                triggerGameOver(); // End the game
-                // Break immediately after game over to prevent further checks in the same frame
-                break;
+            // --- NEW: Modified Collision Logic ---
+            if (player.collidesWithRect(o)) { // Check collision first
+                // Check if it's a STOMP action
+                let isFalling = player.velocityY > 0;
+                // Check if player's feet are roughly aligned with the obstacle's top
+                // and the player wasn't already overlapping too much vertically in the previous frame (basic check)
+                let feetNearTop = (player.y + player.height) > o.y && (player.y + player.height) < (o.y + o.height * 0.5); 
+
+                if (o.stompable && isFalling && feetNearTop && !isInvincible) {
+                    // --- Stomp Successful! ---
+                    obstacles.splice(i, 1); // Remove the stomped obstacle
+                    score += 2; // Award points for stomping
+                    createScorePopup(o.x + o.width / 2, o.y, "+2"); // Score popup
+                    
+                    // Give player a small bounce
+                    player.velocityY = player.lift * 0.6; // Adjust bounce height as needed
+                    player.onGround = false; // Player is airborne after bounce
+                    player.canDoubleJump = true; // Allow double jump after stomp bounce
+
+                    // Optional: Play stomp sound effect here
+                    // if (stompSound && stompSound.isLoaded()) { stompSound.play(); }
+                    
+                    continue; // Skip the game over check for this iteration
+
+                } else if (!isInvincible) {
+                     // --- Normal Collision (Not a stomp or player invincible) ---
+                     triggerGameOver(); // End the game
+                     // Break immediately after game over
+                     break; 
+                }
             }
+            // --- End Modified Collision Logic ---
+
 
             // Remove if off-screen
             if (o.x < -o.width) {
@@ -966,20 +1022,20 @@ function draw() {
 
         fill(255); // White text
         stroke(0);
-        strokeWeight(3);
+        strokeWeight(3 * scaleFactor); // Scale stroke
         textAlign(CENTER, CENTER);
 
-        textSize(48);
-        text("GAME OVER", width / 2, height / 2 - 40);
+        textSize(48 * scaleFactor); // Scale text
+        text("GAME OVER", width / 2, height / 2 - 40 * scaleFactor); // Scale position
 
-        textSize(24);
-        text("Final Score: " + score, width / 2, height / 2 + 10);
+        textSize(24 * scaleFactor); // Scale text
+        text("Final Score: " + score, width / 2, height / 2 + 10 * scaleFactor); // Scale position
 
-        textSize(18 * scaleFactor);
+        textSize(18 * scaleFactor); // Scale text
         if (isMobileDevice) {
-            text("Tap to Restart", width / 2, height / 2 + 50 * scaleFactor);
+            text("Tap to Restart", width / 2, height / 2 + 50 * scaleFactor); // Scale position
         } else {
-            text("Press 'R' or SPACE to Restart", width / 2, height / 2 + 50 * scaleFactor);
+            text("Press 'R' or SPACE to Restart", width / 2, height / 2 + 50 * scaleFactor); // Scale position
         }
         noStroke();
 
@@ -987,18 +1043,34 @@ function draw() {
         // The game is effectively paused.
     }
      else if (gameState === 'start') {
-         // --- Draw Start Screen (Optional, currently skips straight to playing) ---
-         // You could add a start screen here if desired, similar to gameOver.
-         // For now, resetGame() sets state to 'playing'.
-         // Example:
-         // fill(0, 0, 0, 150);
-         // rect(0, 0, width, height);
-         // fill(255);
-         // textAlign(CENTER, CENTER);
-         // textSize(32);
-         // text("Basketball Collector", width / 2, height / 2 - 30);
-         // textSize(20);
-         // text("Press SPACE or UP to Start", width / 2, height / 2 + 20);
+         // --- Draw Start Screen ---
+         fill(0, 0, 0, 150); // Dark overlay
+         rect(0, 0, width, height);
+
+         fill(255); // White text
+         stroke(0);
+         strokeWeight(3 * scaleFactor); // Scale stroke
+         textAlign(CENTER, CENTER);
+
+         textSize(36 * scaleFactor); // Scale text size
+         text("Basketball Collector", width / 2, height / 2 - 40 * scaleFactor); // Scale position
+
+         textSize(20 * scaleFactor); // Scale text size
+         if (isMobileDevice) {
+             text("Tap to Start!", width / 2, height / 2 + 20 * scaleFactor); // Scale position
+         } else {
+             text("Press SPACE, UP, W, or Click to Start!", width / 2, height / 2 + 20 * scaleFactor); // Scale position
+         }
+
+         noStroke();
+         // Maybe draw the player stationary?
+         if (player) { // Check if player exists
+             player.show(); // Show the player character on the start screen
+             // Keep player visually on the ground for the start screen
+             player.y = height - groundHeight - player.height;
+             player.velocityY = 0;
+             player.onGround = true;
+         }
     }
 }
 
@@ -1011,12 +1083,12 @@ function keyPressed() {
         }
     } else if (gameState === 'gameOver') {
         if (key === 'r' || key === 'R' || key === ' ' || keyCode === UP_ARROW) {
-            resetGame(); // Restart the game
+            resetGame(); // Restart the game (goes to start screen)
             return false; // Prevent default
         }
     } else if (gameState === 'start') {
-        if (key === ' ' || keyCode === UP_ARROW) {
-            resetGame(); // Start the game
+        if (key === ' ' || keyCode === UP_ARROW || keyCode === 87) { // Space, Up Arrow, or W to start
+            gameState = 'playing'; // <<-- Change state to playing
             return false; // Prevent default
         }
     }
@@ -1027,8 +1099,10 @@ function keyPressed() {
 function touchStarted() {
     if (gameState === 'playing') {
         player.jump();
-    } else if (gameState === 'gameOver' || gameState === 'start') {
-        resetGame();
+    } else if (gameState === 'gameOver') { // Changed condition slightly
+        resetGame(); // Reset to start screen
+    } else if (gameState === 'start') { // <<-- ADD THIS BLOCK
+        gameState = 'playing';         // Start the game on tap
     }
     return false; // Prevent default browser behavior
 }
@@ -1038,8 +1112,10 @@ function mousePressed() {
     if (!isMobileDevice) { // Only handle mouse on non-mobile devices
         if (gameState === 'playing') {
             player.jump();
-        } else if (gameState === 'gameOver' || gameState === 'start') {
-            resetGame();
+        } else if (gameState === 'gameOver') { // Changed condition slightly
+            resetGame(); // Reset to start screen
+        } else if (gameState === 'start') { // <<-- ADD THIS BLOCK
+            gameState = 'playing';         // Start the game on click
         }
         return false;
     }
